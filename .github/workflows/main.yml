@@ -1,0 +1,48 @@
+name: Django Production CI/CD Gate
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test-and-scan:
+    name: Security Scan & Automated Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Backend Image
+        run: docker build -t gotilo-backend:latest ./backend
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'gotilo-backend:latest'
+          format: 'table'
+          # Immediately fail the pipeline if High/Critical vulnerabilities exist
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Start Full Container Network
+        run: |
+          docker-compose up -d --build
+          sleep 10 # Allow PostgreSQL to initialize
+
+      - name: Run Database Migrations
+        run: docker-compose exec -T web python manage.py migrate
+
+      - name: Execute Pytest Suite
+        run: docker-compose exec -T web pytest
+
+      - name: Tear Down Network
+        if: always()
+        run: docker-compose down
